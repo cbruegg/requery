@@ -1,5 +1,5 @@
 /*
- * Copyright 2016 requery.io
+ * Copyright 2017 requery.io
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -122,6 +122,7 @@ class AttributeMember extends BaseProcessableElement<Element> implements Attribu
     private String defaultValue;
     private String definition;
     private String collate;
+    private String optionalClassName;
     private String orderByColumn;
     private Order orderByDirection;
     private AssociativeEntityDescriptor associativeDescriptor;
@@ -187,7 +188,19 @@ class AttributeMember extends BaseProcessableElement<Element> implements Attribu
                 if (isMap && cardinality != null) {
                     builderClass = MapAttributeBuilder.class;
                 }
-                isOptional = Mirrors.isInstance(types, element, Optional.class);
+                // check for optional compatible types
+                String[] names = {
+                        Optional.class.getName(),
+                        "com.google.common.base.Optional",
+                        "java8.util.Optional"
+                };
+                for (String name : names) {
+                    if (Mirrors.isInstance(types, element, name)) {
+                        isOptional = true;
+                        optionalClassName = name;
+                        break;
+                    }
+                }
                 isBoolean = Mirrors.isInstance(types, element, Boolean.class);
             }
         }
@@ -789,6 +802,11 @@ class AttributeMember extends BaseProcessableElement<Element> implements Attribu
     }
 
     @Override
+    public String optionalClass() {
+        return optionalClassName;
+    }
+
+    @Override
     public String orderBy() {
         return orderByColumn;
     }
@@ -849,7 +867,8 @@ class AttributeMember extends BaseProcessableElement<Element> implements Attribu
             for (CascadeType type : types) {
                 switch (type) {
                     case ALL:
-                        actions.addAll(EnumSet.allOf(CascadeAction.class));
+                        actions.add(CascadeAction.SAVE);
+                        actions.add(CascadeAction.DELETE);
                     case PERSIST:
                         actions.add(CascadeAction.SAVE);
                         break;

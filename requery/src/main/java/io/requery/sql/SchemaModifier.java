@@ -48,7 +48,7 @@ import static io.requery.sql.Keyword.*;
  *
  * @author Nikhil Purushe
  */
-public class SchemaModifier {
+public class SchemaModifier implements ConnectionProvider {
 
     private final ConnectionProvider connectionProvider;
     private final EntityModel model;
@@ -86,7 +86,8 @@ public class SchemaModifier {
         }
     }
 
-    private synchronized Connection getConnection() throws SQLException {
+    @Override
+    public synchronized Connection getConnection() throws SQLException {
         Connection connection = connectionProvider.getConnection();
         if (platform == null) {
             platform = new PlatformDelegate(connection);
@@ -120,11 +121,25 @@ public class SchemaModifier {
      * @throws TableModificationException if the creation fails.
      */
     public void createTables(TableCreationMode mode) {
-        ArrayList<Type<?>> sorted = sortTypes();
-        try (Connection connection = getConnection();
-             Statement statement = connection.createStatement()) {
-
+        try (Connection connection = getConnection()) {
             connection.setAutoCommit(false);
+            createTables(connection, mode, true);
+            connection.commit();
+        } catch (SQLException e) {
+            throw new TableModificationException(e);
+        }
+    }
+
+    /**
+     * Create the tables over the connection.
+     *
+     * @param connection to use
+     * @param mode creation mode.
+     * @param createIndexes true to also create indexes, false otherwise
+     */
+    public void createTables(Connection connection, TableCreationMode mode, boolean createIndexes) {
+        ArrayList<Type<?>> sorted = sortTypes();
+        try (Statement statement = connection.createStatement()) {
             if (mode == TableCreationMode.DROP_CREATE) {
                 executeDropStatements(statement);
             }
@@ -134,12 +149,27 @@ public class SchemaModifier {
                 statement.execute(sql);
                 statementListeners.afterExecuteUpdate(statement, 0);
             }
-            for (Type<?> type : sorted) {
-                createIndexes(connection, mode, type);
+            if (createIndexes) {
+                for (Type<?> type : sorted) {
+                    createIndexes(connection, mode, type);
+                }
             }
-            connection.commit();
         } catch (SQLException e) {
             throw new TableModificationException(e);
+        }
+    }
+
+    /**
+     * Creates all indexes in the model.
+     *
+     * @param connection to use
+     * @param mode creation mode.
+     * @throws TableModificationException if the creation fails.
+     */
+    public void createIndexes(Connection connection, TableCreationMode mode) {
+        ArrayList<Type<?>> sorted = sortTypes();
+        for (Type<?> type : sorted) {
+            createIndexes(connection, mode, type);
         }
     }
 
@@ -199,10 +229,30 @@ public class SchemaModifier {
     /**
      * Alters the attribute's table and add's the column representing the given {@link Attribute}.
      *
-     * @param attribute being added
-     * @param <T>       parent type of the attribute
+     * @param attribute  being added
+     * @param <T>        parent type of the attribute
+     * @throws TableModificationException if the addition fails.
      */
     public <T> void addColumn(Attribute<T, ?> attribute) {
+        try (Connection connection = getConnection()) {
+            addColumn(connection, attribute);
+        } catch (SQLException e) {
+            throw new TableModificationException(e);
+        }
+    }
+
+    /**
+     * Alters the attribute's table and add's the column representing the given {@link Attribute}.
+     *
+     * @param connection to use
+     * @param attribute  being added
+     * @param <T>        parent type of the attribute
+     */
+    public <T> void addColumn(Connection connection, Attribute<T, ?> attribute) {
+        addColumn(connection, attribute, true);
+    }
+
+    public <T> void addColumn(Connection connection, Attribute<T, ?> attribute, boolean inlineUnique) {
         Type<T> type = attribute.getDeclaringType();
         QueryBuilder qb = createQueryBuilder();
         qb.keyword(ALTER, TABLE).tableName(type.getName());
@@ -211,7 +261,7 @@ public class SchemaModifier {
                 // create the column first then the constraint
                 qb.keyword(ADD, COLUMN);
                 createColumn(qb, attribute);
-                executeSql(qb);
+                executeSql(connection, qb);
                 qb = createQueryBuilder();
                 qb.keyword(ALTER, TABLE)
                     .tableName(type.getName()).keyword(ADD);
@@ -225,9 +275,9 @@ public class SchemaModifier {
             }
         } else {
             qb.keyword(ADD, COLUMN);
-            createColumn(qb, attribute);
+            createColumn(qb, attribute, inlineUnique);
         }
-        executeSql(qb);
+        executeSql(connection, qb);
     }
 
     /**
@@ -235,6 +285,7 @@ public class SchemaModifier {
      *
      * @param attribute being added
      * @param <T>       parent type of the attribute
+     * @throws TableModificationException if the removal fails.
      */
     public <T> void dropColumn(Attribute<T, ?> attribute) {
         Type<T> type = attribute.getDeclaringType();
@@ -246,14 +297,10 @@ public class SchemaModifier {
             .tableName(type.getName())
             .keyword(DROP, COLUMN)
             .attribute(attribute);
-        executeSql(qb);
-    }
-
-    private void executeSql(QueryBuilder qb) {
         try (Connection connection = getConnection()) {
             executeSql(connection, qb);
         } catch (SQLException e) {
-            throw new PersistenceException(e);
+            throw new TableModificationException(e);
         }
     }
 
@@ -317,12 +364,25 @@ public class SchemaModifier {
         return Collections.unmodifiableSet(referencedTypes);
     }
 
+    /**
+     * Generates the create table for a specific type.
+     *
+     * @param type to generate the table statement
+     * @param mode creation mode
+     * @param <T> Type
+     * @return create table sql string
+     */
     public <T> String tableCreateStatement(Type<T> type, TableCreationMode mode) {
         String tableName = type.getName();
-        Set<Attribute<T, ?>> attributes = type.getAttributes();
 
         QueryBuilder qb = createQueryBuilder();
-        qb.keyword(CREATE, TABLE);
+        qb.keyword(CREATE);
+        if (type.getTableCreateAttributes() != null) {
+            for (String attribute : type.getTableCreateAttributes()) {
+                qb.append(attribute, true);
+            }
+        }
+        qb.keyword(TABLE);
         if (mode == TableCreationMode.CREATE_NOT_EXISTS) {
             qb.keyword(IF, NOT, EXISTS);
         }
@@ -346,6 +406,7 @@ public class SchemaModifier {
             }
         };
 
+        Set<Attribute<T, ?>> attributes = type.getAttributes();
         for (Attribute attribute : attributes) {
             if (filter.test(attribute)) {
                 if (index > 0) {
@@ -415,6 +476,7 @@ public class SchemaModifier {
             }
             qb.value(fieldType.getIdentifier());
         }
+
         qb.keyword(REFERENCES);
         qb.tableName(referenced.getName());
         if (referencedAttribute != null) {
@@ -423,6 +485,7 @@ public class SchemaModifier {
                 .closeParenthesis()
                 .space();
         }
+
         if (attribute.getDeleteAction() != null) {
             qb.keyword(ON, DELETE);
             appendReferentialAction(qb, attribute.getDeleteAction());
@@ -431,6 +494,15 @@ public class SchemaModifier {
             !referencedAttribute.isGenerated() && attribute.getUpdateAction() != null) {
             qb.keyword(ON, UPDATE);
             appendReferentialAction(qb, attribute.getUpdateAction());
+        }
+
+        if (platform.supportsInlineForeignKeyReference()) {
+            if (!attribute.isNullable()) {
+                qb.keyword(NOT, NULL);
+            }
+            if (attribute.isUnique()) {
+                qb.keyword(UNIQUE);
+            }
         }
     }
 
@@ -455,6 +527,10 @@ public class SchemaModifier {
     }
 
     private void createColumn(QueryBuilder qb, Attribute<?,?> attribute) {
+        createColumn(qb, attribute, true);
+    }
+
+    private void createColumn(QueryBuilder qb, Attribute<?,?> attribute, boolean inlineUnique) {
 
         qb.attribute(attribute);
         FieldType fieldType = mapping.mapAttribute(attribute);
@@ -532,9 +608,16 @@ public class SchemaModifier {
         if (!attribute.isNullable()) {
             qb.keyword(NOT, NULL);
         }
-        if (attribute.isUnique()) {
+        if (inlineUnique && attribute.isUnique()) {
             qb.keyword(UNIQUE);
         }
+    }
+
+    public void createIndex(Connection connection, Attribute<?,?> attribute, TableCreationMode mode) {
+        QueryBuilder qb = createQueryBuilder();
+        String name = attribute.getName() + "_index";
+        createIndex(qb, name, Collections.singleton(attribute), attribute.getDeclaringType(), mode);
+        executeSql(connection, qb);
     }
 
     private <T> void createIndexes(Connection connection, TableCreationMode mode, Type<T> type) {
@@ -565,7 +648,7 @@ public class SchemaModifier {
 
     private void createIndex(QueryBuilder qb,
                              String indexName,
-                             Set<Attribute<?,?>> attributes,
+                             Set<? extends Attribute<?,?>> attributes,
                              Type<?> type, TableCreationMode mode) {
         qb.keyword(CREATE);
         if ((attributes.size() >= 1 && attributes.iterator().next().isUnique()) ||

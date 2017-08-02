@@ -17,6 +17,7 @@
 package io.requery.sql;
 
 import io.requery.Converter;
+import io.requery.converter.CurrencyConverter;
 import io.requery.converter.EnumStringConverter;
 import io.requery.converter.LocalDateConverter;
 import io.requery.converter.LocalDateTimeConverter;
@@ -135,6 +136,7 @@ public class GenericMapping implements Mapping {
         converters.add(new UUIDConverter());
         converters.add(new URIConverter());
         converters.add(new URLConverter());
+        converters.add(new CurrencyConverter());
         if (LanguageVersion.current().atLeast(LanguageVersion.JAVA_1_8)) {
             converters.add(new LocalDateConverter());
             converters.add(new LocalTimeConverter());
@@ -290,6 +292,10 @@ public class GenericMapping implements Mapping {
             converter = converterForType(type);
         }
         Object value = fieldType.read(results, column);
+        // if the type is primitive the wasNull check isn't performed by the type, check here
+        if (isPrimitive && results.wasNull()) {
+            value = null;
+        }
         if (converter != null) {
             value = toMapped((Converter) converter, type, value);
         }

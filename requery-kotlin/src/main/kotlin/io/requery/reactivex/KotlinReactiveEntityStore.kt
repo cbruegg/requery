@@ -19,6 +19,7 @@ package io.requery.reactivex
 import io.reactivex.Completable
 import io.reactivex.Maybe
 import io.reactivex.Single
+import io.requery.TransactionIsolation
 import io.requery.kotlin.*
 import io.requery.kotlin.Deletion
 import io.requery.kotlin.InsertInto
@@ -39,7 +40,7 @@ class KotlinReactiveEntityStore<T : Any>(private var store: BlockingEntityStore<
     override fun close() = store.close()
 
     override infix fun <E : T> select(type: KClass<E>): Selection<ReactiveResult<E>> = result(store.select(type))
-    override fun <E : T> select(vararg attributes: QueryableAttribute<E, *>): Selection<ReactiveResult<E>> = result(store.select(*attributes))
+    override fun <E : T> select(type: KClass<E>, vararg attributes: QueryableAttribute<E, *>): Selection<ReactiveResult<E>> = result(store.select(type, *attributes))
     override fun select(vararg expressions: Expression<*>): Selection<ReactiveResult<Tuple>> = result(store.select(*expressions))
 
     override fun <E : T> insert(type: KClass<E>): Insertion<ReactiveResult<Tuple>> = result(store.insert(type))
@@ -79,6 +80,9 @@ class KotlinReactiveEntityStore<T : Any>(private var store: BlockingEntityStore<
     override fun <E : T> raw(type: KClass<E>, query: String, vararg parameters: Any): Result<E> = store.raw(type, query, parameters)
 
     override fun toBlocking(): BlockingEntityStore<T> = store
+
+    fun <V> withTransaction(body: BlockingEntityStore<T>.() -> V): Single<V> = Single.fromCallable { store.withTransaction(body) }
+    fun <V> withTransaction(isolation: TransactionIsolation, body: BlockingEntityStore<T>.() -> V): Single<V> = Single.fromCallable { store.withTransaction(isolation, body) }
 
     @Suppress("UNCHECKED_CAST")
     private fun <E> result(query: Return<out Result<E>>): QueryDelegate<ReactiveResult<E>> {

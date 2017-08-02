@@ -19,6 +19,7 @@ package io.requery.sql.gen;
 import io.requery.meta.Attribute;
 import io.requery.meta.QueryAttribute;
 import io.requery.query.Aliasable;
+import io.requery.query.NullOperand;
 import io.requery.query.RowExpression;
 import io.requery.query.Condition;
 import io.requery.query.Expression;
@@ -40,6 +41,7 @@ import io.requery.util.function.Supplier;
 
 import java.util.Collection;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 
@@ -294,7 +296,8 @@ public class DefaultOutput implements Output {
         }
         if (join.tableName() != null) {
             if (autoAlias) {
-                aliases.appendJoin(qb, join.tableName());
+                aliases.remove(join.tableName());
+                aliases.append(qb, join.tableName());
             } else {
                 qb.tableName(join.tableName());
             }
@@ -356,19 +359,31 @@ public class DefaultOutput implements Output {
                 appendConditionValue(expression, value);
             }
         } else if(leftOperand instanceof Condition) {
-            if (depth > 0) {
-                qb.openParenthesis();
-            }
-            appendOperation((Condition) leftOperand, depth + 1);
-            appendOperator(condition.getOperator());
-            Object value = condition.getRightOperand();
-            if (value instanceof Condition) {
-                appendOperation((Condition) value, depth + 1);
+            // Handle unary operator
+            if (condition.getRightOperand() instanceof NullOperand) {
+                appendOperator(condition.getOperator());
+                if (depth > 0) {
+                    qb.openParenthesis();
+                }
+                appendOperation((Condition) leftOperand, depth + 1);
+                if (depth > 0) {
+                    qb.closeParenthesis().space();
+                }
             } else {
-                throw new IllegalStateException();
-            }
-            if (depth > 0) {
-                qb.closeParenthesis().space();
+                if (depth > 0) {
+                    qb.openParenthesis();
+                }
+                appendOperation((Condition) leftOperand, depth + 1);
+                appendOperator(condition.getOperator());
+                Object value = condition.getRightOperand();
+                if (value instanceof Condition) {
+                    appendOperation((Condition) value, depth + 1);
+                } else {
+                    throw new IllegalStateException();
+                }
+                if (depth > 0) {
+                    qb.closeParenthesis().space();
+                }
             }
         } else {
             throw new IllegalStateException("unknown start expression type " + leftOperand);
@@ -483,6 +498,9 @@ public class DefaultOutput implements Output {
             case OR:
                 qb.keyword(OR);
                 break;
+            case NOT:
+                qb.keyword(NOT);
+                break;
         }
     }
 
@@ -499,6 +517,7 @@ public class DefaultOutput implements Output {
     private static class Aliases {
 
         private final Map<String, String> aliases = new HashMap<>();
+        private final Set<String> appended = new HashSet<>();
         private char index = 'a';
 
         private String alias(String key) {
@@ -513,37 +532,43 @@ public class DefaultOutput implements Output {
             return alias;
         }
 
-        void appendJoin(QueryBuilder qb, String table) {
+        void remove(String table) {
             String key = table.replaceAll("\"", "");
-            // TODO could be a problem depending on join orders
-            if (aliases.containsKey(key)) {
-                aliases.remove(key);
+            if (appended.contains(key)) {
+                aliases.remove(key); // generate a new alias for the rest of the statement
             }
-            String alias = alias(key);
-            qb.tableName(table).value(alias);
         }
 
         void append(QueryBuilder qb, String table) {
             String key = table.replaceAll("\"", "");
             String alias = alias(key);
             qb.tableName(table).value(alias);
+            appended.add(key);
         }
 
         void prefix(QueryBuilder qb, Attribute attribute) {
             String key = attribute.getDeclaringType().getName();
             String alias = alias(key);
-            qb.append(alias + ".").attribute(attribute);
+            qb.aliasAttribute(alias, attribute);
         }
 
         void prefix(QueryBuilder qb, Expression expression) {
             Expression inner = unwrapExpression(expression);
-            String key = inner.getName();
-            if(inner.getExpressionType() == ExpressionType.ATTRIBUTE) {
+
+            if (inner.getExpressionType() == ExpressionType.ATTRIBUTE) {
                 Attribute attribute = (Attribute) inner;
-                key = attribute.getDeclaringType().getName();
+                if (expression.getExpressionType() == ExpressionType.ALIAS) {
+                    // work around aliasing a system version column
+                    String key = attribute.getDeclaringType().getName();
+                    qb.append(alias(key) + "." + expression.getName()).space();
+                } else {
+                    prefix(qb, attribute);
+                }
+            } else {
+                String key = inner.getName();
+                String alias = alias(key);
+                qb.append(alias + "." + expression.getName()).space();
             }
-            String alias = alias(key);
-            qb.append(alias + "." + expression.getName()).space();
         }
     }
 }

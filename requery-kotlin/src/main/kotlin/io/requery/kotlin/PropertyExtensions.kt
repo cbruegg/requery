@@ -22,6 +22,7 @@ import io.requery.meta.Type
 import io.requery.query.Expression
 import io.requery.query.OrderingExpression
 import io.requery.query.Return
+import io.requery.query.RowExpression
 import io.requery.query.function.Abs
 import io.requery.query.function.Avg
 import io.requery.query.function.Lower
@@ -80,16 +81,30 @@ inline fun <reified T : Any, R> KProperty1<T, R>.like(expression: String): Logic
 inline fun <reified T : Any, R> KProperty1<T, R>.notLike(expression: String): Logical<out Expression<R>, out String> = findAttribute(this).notLike(expression)
 inline fun <reified T : Any, R> KProperty1<T, R>.between(start: R, end: R): Logical<out Expression<R>, Any> = findAttribute(this).between(start, end)
 
+inline fun <reified T : Any, R> rowExpressionOf(vararg expressions: KProperty1<T, R>): RowExpression {
+    val list = ArrayList<Expression<*>>()
+    expressions.forEach { e -> list.add(findAttribute(e)) }
+    return RowExpression.of(list)
+}
+
 /** Given a property find the corresponding generated attribute for it */
 inline fun <reified T : Any, R> findAttribute(property: KProperty1<T, R>):
         AttributeDelegate<T, R> {
-    val type: Type<*> = AttributeDelegate.types
+    val type: Type<*>? = AttributeDelegate.types
             .filter { type -> (type.classType == T::class.java || type.baseType == T::class.java)}
-            .first()
+            .firstOrNull()
+
+    if (type == null) {
+        throw UnsupportedOperationException(T::class.java.simpleName + "." + property.name + " cannot be used in query")
+    }
+
     val attribute: Attribute<*, *>? = type.attributes
-            .filter { attribute ->
-                attribute.propertyName.replaceFirst("get", "")
+            .filter { attribute -> attribute.propertyName.replaceFirst("get", "")
                         .equals(property.name, ignoreCase = true) }.firstOrNull()
+
+    if (attribute !is AttributeDelegate) {
+        throw UnsupportedOperationException(T::class.java.simpleName + "." + property.name + " cannot be used in query")
+    }
     @Suppress("UNCHECKED_CAST")
     return attribute as AttributeDelegate<T, R>
 }

@@ -38,9 +38,10 @@ import kotlin.reflect.KClass
  */
 class KotlinEntityDataStore<T : Any>(configuration: Configuration) : BlockingEntityStore<T> {
 
-    private var data: EntityDataStore<T> = EntityDataStore(configuration)
-    private var context : EntityContext<T> = data.context()
-    private var model : EntityModel = configuration.model
+    val data: EntityDataStore<T> = EntityDataStore(configuration)
+
+    private val context : EntityContext<T> = data.context()
+    private val model : EntityModel = configuration.model
 
     override fun close() = data.close()
 
@@ -56,16 +57,15 @@ class KotlinEntityDataStore<T : Any>(configuration: Configuration) : BlockingEnt
         return query
     }
 
-    override fun <E : T> select(vararg attributes: QueryableAttribute<E, *>): Selection<Result<E>> {
+    override fun <E : T> select(type: KClass<E>, vararg attributes: QueryableAttribute<E, *>): Selection<Result<E>> {
         if (attributes.isEmpty()) {
             throw IllegalArgumentException()
         }
-        val classType = attributes[0].declaringType.classType
-        val reader = context.read<E>(classType)
+        val reader = context.read<E>(type.java)
         val selection: Set<Expression<*>> = LinkedHashSet(Arrays.asList<Expression<*>>(*attributes))
         val resultReader = reader.newResultReader(attributes)
         val query = QueryDelegate(QueryType.SELECT, model, SelectOperation(context, resultReader))
-        query.select(*selection.toTypedArray()).from(classType)
+        query.select(*selection.toTypedArray()).from(type.java)
         return query
     }
 
@@ -76,7 +76,7 @@ class KotlinEntityDataStore<T : Any>(configuration: Configuration) : BlockingEnt
     }
 
     override fun <E : T> insert(type: KClass<E>): Insertion<Result<Tuple>> {
-        val selection = data.keyExpressions(type.java)
+        val selection = data.generatedExpressions(type.java)
         val operation = InsertReturningOperation(context, selection)
         val query = QueryDelegate<Result<Tuple>>(QueryType.INSERT, model, operation)
         query.from(type)
@@ -84,7 +84,7 @@ class KotlinEntityDataStore<T : Any>(configuration: Configuration) : BlockingEnt
     }
 
     override fun <E : T> insert(type: KClass<E>, vararg attributes: QueryableAttribute<E, *>): InsertInto<out Result<Tuple>> {
-        val selection = data.keyExpressions(type.java)
+        val selection = data.generatedExpressions(type.java)
         val operation = InsertReturningOperation(context, selection)
         val query = QueryDelegate<Result<Tuple>>(QueryType.INSERT, model, operation)
         return query.insertColumns(attributes)
@@ -141,9 +141,9 @@ class KotlinEntityDataStore<T : Any>(configuration: Configuration) : BlockingEnt
 
     override fun <E : T, K> findByKey(type: KClass<E>, key: K): E? = data.findByKey(type.java, key)
 
-    override fun raw(query: String, vararg parameters: Any): Result<Tuple> = data.raw(query, parameters)
+    override fun raw(query: String, vararg parameters: Any): Result<Tuple> = data.raw(query, *parameters)
     override fun <E : T> raw(type: KClass<E>, query: String, vararg parameters: Any): Result<E> =
-            data.raw(type.java, query, parameters)
+            data.raw(type.java, query, *parameters)
 
     override fun <V> withTransaction(body: BlockingEntityStore<T>.() -> V): V {
         val transaction = data.transaction().begin()

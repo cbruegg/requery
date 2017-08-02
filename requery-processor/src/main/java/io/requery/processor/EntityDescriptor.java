@@ -17,11 +17,13 @@
 package io.requery.processor;
 
 import io.requery.PropertyNameStyle;
+import io.requery.PropertyVisibility;
 
 import javax.lang.model.element.Element;
 import javax.lang.model.element.ExecutableElement;
 import javax.lang.model.element.TypeElement;
 import javax.lang.model.type.TypeMirror;
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -41,7 +43,7 @@ interface EntityDescriptor {
     /**
      * @return map of elements to attributes
      */
-    Map<Element, ? extends AttributeDescriptor> attributes();
+    Collection<? extends AttributeDescriptor> attributes();
 
     /**
      * @return true if this entity type requires additional types to be generated to compile.
@@ -88,6 +90,11 @@ interface EntityDescriptor {
      * @return {@link PropertyNameStyle} style of the accessors in the entity
      */
     PropertyNameStyle propertyNameStyle();
+
+    /**
+     * @return {@link PropertyVisibility} level of the fields in the entity
+     */
+    PropertyVisibility propertyVisibility();
 
     /**
      * @return true if the entity is cacheable, false otherwise

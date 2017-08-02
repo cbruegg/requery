@@ -67,6 +67,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
+import static io.requery.query.Unary.not;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
@@ -143,6 +144,22 @@ public abstract class FunctionalTest extends RandomData {
         Person cached = data.select(Person.class)
                 .where(Person.ID.equal(person.getId())).get().first();
         assertSame(cached, person);
+    }
+
+    @Test
+    public void testInsertDefaultValue() {
+        Person person = randomPerson();
+        data.insert(person);
+        assertTrue(person.getId() > 0);
+        assertEquals("empty", person.getDescription());
+    }
+
+    @Test
+    public void testInsertSelectNullKeyReference() {
+        Person person = randomPerson();
+        data.insert(person);
+        assertNull(person.getAddress());
+        assertNull(data.select(Person.class).get().first().getAddress());
     }
 
     @Test
@@ -884,6 +901,31 @@ public abstract class FunctionalTest extends RandomData {
     }
 
     @Test
+    public void testSingleQueryWhereNot() {
+        final String name = "firstName";
+        final String email = "not@test.io";
+        for (int i = 0; i < 10; i++) {
+            Person person = randomPerson();
+            switch (i) {
+                case 0:
+                    person.setName(name);
+                    break;
+                case 1:
+                    person.setEmail(email);
+                    break;
+            }
+            data.insert(person);
+        }
+        try (Result<Person> query = data.select(Person.class)
+                .where(
+                        not(Person.NAME.equal(name)
+                                .or(Person.EMAIL.equal(email)))
+                ).get()) {
+            assertEquals(8, query.toList().size());
+        }
+    }
+
+    @Test
     public void testSingleQueryExecute() {
         data.insert(randomPersons(10));
         Result<Person> result = data.select(Person.class).get();
@@ -1478,6 +1520,34 @@ public abstract class FunctionalTest extends RandomData {
                  data.raw(Person.class, "select * from Person WHERE id = ?", people.get(0))) {
             assertEquals(result.first().getId(), people.get(0).getId());
         }
+    }
+
+    @Test
+    public void testQueryUnionJoinOnSameEntities() {
+        Group group = new Group();
+        group.setName("Hello!");
+        data.insert(group);
+        Person person1 = randomPerson();
+        person1.setName("Carol");
+        person1.getGroups().add(group);
+        data.insert(person1);
+        Person person2 = randomPerson();
+        person2.getGroups().add(group);
+        person2.setName("Bob");
+        data.insert(person2);
+        List<Tuple> result = data.select(Person.NAME.as("personName"), Group.NAME.as("groupName"))
+                .where(Person.ID.eq(person1.getId()))
+                .union()
+                .select(Person.NAME.as("personName"), Group.NAME.as("groupName"))
+                .where(Person.ID.eq(person2.getId()))
+                .orderBy(Person.NAME.as("personName")).get().toList();
+        System.err.println(result.size());
+        System.err.println(result.size() == 2);
+        assertTrue(result.size() == 2);
+        assertTrue(result.get(0).get("personName").equals("Bob"));
+        assertTrue(result.get(0).get("groupName").equals("Hello!"));
+        assertTrue(result.get(1).get("personName").equals("Carol"));
+        assertTrue(result.get(1).get("groupName").equals("Hello!"));
     }
 
     @Test(expected = PersistenceException.class)

@@ -26,12 +26,6 @@ import com.fasterxml.jackson.databind.introspect.AnnotatedClass;
 import com.fasterxml.jackson.databind.introspect.AnnotatedMember;
 import com.fasterxml.jackson.databind.introspect.ObjectIdInfo;
 import io.requery.Column;
-import io.requery.ForeignKey;
-import io.requery.JunctionTable;
-import io.requery.ManyToMany;
-import io.requery.ManyToOne;
-import io.requery.OneToMany;
-import io.requery.OneToOne;
 import io.requery.Table;
 import io.requery.Transient;
 import io.requery.View;
@@ -72,7 +66,7 @@ class EntityAnnotationIntrospector extends AnnotationIntrospector {
         for (Type<?> type : model.getTypes()) {
             if (type.getClassType() == rawClass && type.getSingleKeyAttribute() != null) {
                 Attribute<?, ?> attribute = type.getSingleKeyAttribute();
-                String name = attribute.getPropertyName();
+                String name = removePrefix(attribute.getPropertyName());
                 if (useTableNames) {
                     name = attribute.getName();
                 }
@@ -100,26 +94,16 @@ class EntityAnnotationIntrospector extends AnnotationIntrospector {
         return super.findObjectIdInfo(annotated);
     }
 
-    @Override
-    public ReferenceProperty findReferenceType(AnnotatedMember member) {
-        if (member.hasAnnotation(OneToOne.class)) {
-            if (member.hasAnnotation(ForeignKey.class)) {
-                return ReferenceProperty.managed(null);
-            } else {
-                return ReferenceProperty.back(null);
-            }
-        } else if (member.hasAnnotation(OneToMany.class)) {
-            return ReferenceProperty.back(null);
-        } else if (member.hasAnnotation(ManyToOne.class)) {
-            return ReferenceProperty.managed(null);
-        } else if (member.hasAnnotation(ManyToMany.class)) {
-            if (member.hasAnnotation(JunctionTable.class)) {
-                return ReferenceProperty.managed(null);
-            } else {
-                return ReferenceProperty.back(null);
+    private String removePrefix(String name) {
+        String[] prefixes = { "get", "is" };
+        for (String prefix : prefixes) {
+            if (name.startsWith(prefix) && name.length() > prefix.length()) {
+                StringBuilder sb = new StringBuilder(name.substring(prefix.length()));
+                sb.setCharAt(0, Character.toLowerCase(sb.charAt(0)));
+                return sb.toString();
             }
         }
-        return super.findReferenceType(member);
+        return name;
     }
 
     @Override

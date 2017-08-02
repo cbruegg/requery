@@ -17,6 +17,7 @@
 package io.requery.processor;
 
 import io.requery.PropertyNameStyle;
+import io.requery.PropertyVisibility;
 
 import javax.annotation.processing.ProcessingEnvironment;
 import javax.lang.model.element.Element;
@@ -24,6 +25,7 @@ import javax.lang.model.element.ExecutableElement;
 import javax.lang.model.element.TypeElement;
 import javax.lang.model.type.TypeMirror;
 import java.lang.annotation.Annotation;
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -46,6 +48,7 @@ class EntityElementDelegate implements EntityElement {
     private final Supplier<String[]> tableAttributes;
     private final Supplier<String[]> tableUniqueIndexes;
     private final Supplier<PropertyNameStyle> propertyNameStyle;
+    private final Supplier<PropertyVisibility> propertyVisibility;
     private final Supplier<Boolean> isCacheable;
     private final Supplier<Boolean> isCopyable;
     private final Supplier<Boolean> isEmbedded;
@@ -69,6 +72,7 @@ class EntityElementDelegate implements EntityElement {
         tableAttributes = memoized(delegate::tableAttributes);
         tableUniqueIndexes = memoized(delegate::tableUniqueIndexes);
         propertyNameStyle = memoized(delegate::propertyNameStyle);
+        propertyVisibility = memoized(delegate::propertyVisibility);
         isCacheable = memoized(delegate::isCacheable);
         isCopyable = memoized(delegate::isCopyable);
         isEmbedded = memoized(delegate::isEmbedded);
@@ -131,7 +135,7 @@ class EntityElementDelegate implements EntityElement {
     }
 
     @Override
-    public Map<Element, ? extends AttributeDescriptor> attributes() {
+    public Collection<? extends AttributeDescriptor> attributes() {
         return delegate.attributes();
     }
 
@@ -178,6 +182,11 @@ class EntityElementDelegate implements EntityElement {
     @Override
     public PropertyNameStyle propertyNameStyle() {
         return propertyNameStyle.get();
+    }
+
+    @Override
+    public PropertyVisibility propertyVisibility() {
+        return propertyVisibility.get();
     }
 
     @Override

@@ -1,6 +1,65 @@
 Change Log
 ==========
 
+## 1.4.0
+
+- Support item view types in Android RecyclerView adapter
+- Support withTransaction overloads for Kotlin entity stores
+- Support guava/streamsupport Optional types
+- Rx support transaction methods modified to update in a more expected way
+- Fix default value usage in inserts
+- Fix aliased expression not usable in orderby clause
+- Fix collection getters not used in Jackson serialization
+- Fix collection modification behavior
+- Fix cases where duplicate entity attributes would be generated
+- Fix MutableResult not usable in an entity definition 
+- Fix Android unique column not being able to be added in an upgrade
+- Fix Kotlin Update.set() method property support
+
+## 1.3.2
+
+- Fix Rx observable changes not triggered for nested transactions
+- Fix query table auto aliases removed in union statement
+- Fix CascadeAction.NONE having no effect during a insert/update/delete
+
+## 1.3.1
+
+- Support Logical NOT operator
+- Support Converter for java.util.Currency
+- Fix non-null reference returned for null foreign key reference on entity retrieval 
+- Fix column transformers not used when aliasing columns
+- Fix ConnectionPoolDataSource not used in ConnectionProvider
+- Fix Read only values not filtered from insert/update operations
+- Fix Android schema upgrade using not yet created indexes  
+- Fix Android incorrect concurrent access of DateFormat instance 
+- Fix Android QueryLoader closed previous result instance
+- Fix processing error generated for @Transient entity not used in a relationship
+- Fix Kotlin EntityDataStore inner instance not exposed
+
+## 1.3.0
+
+- Support @Superclass hierarchies  
+- Support @Embedded types in Jackson serialization
+- Support mixed Kotlin queries (note this is an API change to Kotlin partial select statements)
+- Fix incorrect join alias generated in query
+- Fix Android gradle plugin update 2.3.0 not working with entities using databinding
+- Fix Kotlin insert into select query
+- Fix non-null constraint not generated on Postgres
+- Fix @View entities created as tables during schema generation
+
+## 1.2.1
+
+- Support row value expressions
+- Support generating entities from Kotlin abstract classes
+- Support Kotlin 1.1
+- Fix handling of self referencing Many-to-Many relationship
+- Fix Android table/column name transformers not used during upgrade
+- Fix use AutoValue builder setters if available
+- Fix @Value.Default handling for immutable.org types
+- Fix deleting entities from a One-To-Many when using delete(Iterable)
+- Kotlin fix varargs in raw query not expanded
+- Kotlin fix ClassCastException when using a join clause
+
 ## 1.2.0
 
 - Support Jackson serialization with a new Jackson serialization module (requery-jackson)

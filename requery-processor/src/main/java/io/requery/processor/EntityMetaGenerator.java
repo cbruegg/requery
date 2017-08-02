@@ -82,7 +82,7 @@ class EntityMetaGenerator extends EntityPartGenerator {
         TypeName targetName = metadataOnly? ClassName.get(entity.element()) : typeName;
 
         List<QualifiedName> generatedEmbeddedTypes = new LinkedList<>();
-        entity.attributes().values().stream()
+        entity.attributes().stream()
             .filter(attribute -> !attribute.isTransient())
             .forEach(attribute -> {
 
@@ -147,7 +147,7 @@ class EntityMetaGenerator extends EntityPartGenerator {
                     .returns(targetName);
 
             // add embedded builder calls
-            entity.attributes().values().stream()
+            entity.attributes().stream()
                 .filter(AttributeDescriptor::isEmbedded)
                 .forEach(attribute -> graph.embeddedDescriptorOf(attribute).ifPresent(embedded ->
                     embedded.builderType().ifPresent(type -> {
@@ -222,7 +222,7 @@ class EntityMetaGenerator extends EntityPartGenerator {
                                             TypeSpec.Builder builder,
                                             TypeName targetName) {
         // generate the embedded attributes into this type
-        embedded.attributes().values().forEach(attribute -> {
+        embedded.attributes().forEach(attribute -> {
             String fieldName = Names.upperCaseUnderscore(embeddedAttributeName(parent, attribute));
             TypeMirror mirror = attribute.typeMirror();
             builder.addField(
@@ -336,6 +336,7 @@ class EntityMetaGenerator extends EntityPartGenerator {
             builder.add(".setKey(true)\n");
         }
         builder.add(".setGenerated($L)\n", attribute.isGenerated());
+        builder.add(".setReadOnly($L)\n", attribute.isReadOnly());
         builder.add(".setLazy($L)\n", attribute.isLazy());
         builder.add(".setNullable($L)\n", attribute.isNullable());
         builder.add(".setUnique($L)\n", attribute.isUnique());
@@ -434,7 +435,7 @@ class EntityMetaGenerator extends EntityPartGenerator {
                 }
 
                 if (attribute.orderBy() != null) {
-                    referenced.attributes().values().stream()
+                    referenced.attributes().stream()
                         .filter(entry -> entry.name().equals(attribute.orderBy()))
                         .findFirst().ifPresent(orderBy -> {
 

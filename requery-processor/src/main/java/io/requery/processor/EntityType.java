@@ -20,6 +20,7 @@ import io.requery.Embedded;
 import io.requery.Entity;
 import io.requery.Factory;
 import io.requery.PropertyNameStyle;
+import io.requery.PropertyVisibility;
 import io.requery.ReadOnly;
 import io.requery.Table;
 import io.requery.Transient;
@@ -46,6 +47,7 @@ import javax.persistence.Index;
 import javax.tools.Diagnostic;
 import java.lang.annotation.Annotation;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -64,13 +66,13 @@ import java.util.stream.Stream;
 class EntityType extends BaseProcessableElement<TypeElement> implements EntityElement {
 
     private final ProcessingEnvironment processingEnvironment;
-    private final Map<Element, AttributeDescriptor> attributes;
+    private final Set<AttributeDescriptor> attributes;
     private final Map<Element, ListenerMethod> listeners;
 
     EntityType(ProcessingEnvironment processingEnvironment, TypeElement typeElement) {
         super(typeElement);
         this.processingEnvironment = processingEnvironment;
-        attributes = new LinkedHashMap<>();
+        attributes = new LinkedHashSet<>();
         listeners = new LinkedHashMap<>();
     }
 
@@ -83,11 +85,20 @@ class EntityType extends BaseProcessableElement<TypeElement> implements EntityEl
                 .forEach(this::computeAttribute);
         } else {
             // private/static/final members fields are skipped
-            ElementFilter.fieldsIn(element().getEnclosedElements()).stream()
-                .filter(element -> !element.getModifiers().contains(Modifier.PRIVATE) &&
-                    !element.getModifiers().contains(Modifier.STATIC) &&
-                    (!element.getModifiers().contains(Modifier.FINAL) || isImmutable()))
-                .forEach(this::computeAttribute);
+            Set<VariableElement> elements = ElementFilter.fieldsIn(element().getEnclosedElements())
+                    .stream()
+                    .filter(element -> !element.getModifiers().contains(Modifier.PRIVATE) &&
+                            !element.getModifiers().contains(Modifier.STATIC) &&
+                            (!element.getModifiers().contains(Modifier.FINAL) || isImmutable()))
+                    .collect(Collectors.toSet());
+
+            if (elements.isEmpty()) { // if nothing to process try the getters instead
+                ElementFilter.methodsIn(element().getEnclosedElements()).stream()
+                        .filter(this::isMethodProcessable)
+                        .forEach(this::computeAttribute);
+            } else {
+                elements.forEach(this::computeAttribute);
+            }
         }
         // find listener annotated methods
         ElementFilter.methodsIn(element().getEnclosedElements()).forEach(element ->
@@ -100,7 +111,7 @@ class EntityType extends BaseProcessableElement<TypeElement> implements EntityEl
         }));
 
         Set<ProcessableElement<?>> elements = new LinkedHashSet<>();
-        attributes().values().forEach(
+        attributes().forEach(
             attribute -> elements.add((ProcessableElement<?>) attribute));
 
         elements.addAll(listeners.values());
@@ -119,11 +130,11 @@ class EntityType extends BaseProcessableElement<TypeElement> implements EntityEl
         if (element().getKind() == ElementKind.ENUM) {
             validator.error("Entity annotation cannot be applied to an enum class");
         }
-        if (attributes.values().isEmpty()) {
+        if (attributes.isEmpty()) {
             validator.warning("Entity contains no attributes");
         }
-        if (!isReadOnly() && !isEmbedded() && attributes.values().size() == 1 &&
-            attributes.values().iterator().next().isGenerated()) {
+        if (!isReadOnly() && !isEmbedded() && attributes.size() == 1 &&
+            attributes.iterator().next().isGenerated()) {
             validator.warning(
                 "Entity contains only a single generated attribute may fail to persist");
         }
@@ -150,6 +161,8 @@ class EntityType extends BaseProcessableElement<TypeElement> implements EntityEl
 
         TypeMirror type = element.getReturnType();
         boolean isInterface = element().getKind().isInterface();
+        boolean isTransient = Mirrors.findAnnotationMirror(element, Transient.class).isPresent();
+
         // must be a getter style method with no args, can't return void or itself or its builder
         return type.getKind() != TypeKind.VOID &&
                element.getParameters().isEmpty() &&
@@ -158,7 +171,7 @@ class EntityType extends BaseProcessableElement<TypeElement> implements EntityEl
                !type.equals(builderType().orElse(null)) &&
                !element.getModifiers().contains(Modifier.STATIC) &&
                !element.getModifiers().contains(Modifier.DEFAULT) &&
-               !Mirrors.findAnnotationMirror(element(), Transient.class).isPresent() &&
+               (!isTransient || isInterface) &&
                !name.equals("toString") && !name.equals("hashCode");
     }
 
@@ -210,18 +223,22 @@ class EntityType extends BaseProcessableElement<TypeElement> implements EntityEl
     }
 
     private Optional<AttributeMember> computeAttribute(Element element) {
-        return Optional.of((AttributeMember)
-            attributes.computeIfAbsent(element, key -> new AttributeMember(element, this)));
+        AttributeMember attribute = new AttributeMember(element, this);
+        if (attributes.stream().noneMatch( a -> a.name().equals(attribute.name()))) {
+            attributes.add(attribute);
+            return Optional.of(attribute);
+        } else {
+            return Optional.empty();
+        }
     }
 
     @Override
     public void merge(EntityDescriptor from) {
-        from.attributes().entrySet().forEach(entry -> {
+        from.attributes().forEach(entry -> {
             // add this attribute if an attribute with the same name is not already existing
-            if (attributes.values().stream().noneMatch(
-                    attribute -> attribute.name().equals(entry.getValue().name()))) {
-                Element element = entry.getValue().element();
-                attributes.put(entry.getKey(), new AttributeMember(element, this));
+            if (attributes.stream().noneMatch(
+                    attribute -> attribute.name().equals(entry.name()))) {
+                attributes.add(new AttributeMember(entry.element(), this));
             }
         });
         from.listeners().entrySet().stream()
@@ -238,8 +255,7 @@ class EntityType extends BaseProcessableElement<TypeElement> implements EntityEl
 
     @Override
     public boolean generatesAdditionalTypes() {
-        return attributes.values().stream()
-            .anyMatch(member -> member.associativeEntity().isPresent());
+        return attributes.stream().anyMatch(member -> member.associativeEntity().isPresent());
     }
 
     private void checkReserved(String name, ElementValidator validator) {
@@ -250,7 +266,7 @@ class EntityType extends BaseProcessableElement<TypeElement> implements EntityEl
     }
 
     @Override
-    public Map<Element, ? extends AttributeDescriptor> attributes() {
+    public Collection<? extends AttributeDescriptor> attributes() {
         return attributes;
     }
 
@@ -319,8 +335,15 @@ class EntityType extends BaseProcessableElement<TypeElement> implements EntityEl
     @Override
     public PropertyNameStyle propertyNameStyle() {
         return annotationOf(Entity.class)
-            .map(Entity::propertyNameStyle)
-            .orElse(PropertyNameStyle.BEAN);
+                .map(Entity::propertyNameStyle)
+                .orElse(PropertyNameStyle.BEAN);
+    }
+
+    @Override
+    public PropertyVisibility propertyVisibility() {
+        return annotationOf(Entity.class)
+                .map(Entity::propertVisibility)
+                .orElse(PropertyVisibility.PRIVATE);
     }
 
     @Override
@@ -459,7 +482,8 @@ class EntityType extends BaseProcessableElement<TypeElement> implements EntityEl
         ExecutableElement method = factoryMethod().orElseThrow(IllegalStateException::new);
         // TODO need more validation here
         // now match the builder fields to the parameters...
-        Map<Element, AttributeDescriptor> map = new LinkedHashMap<>(attributes);
+        Map<Element, AttributeDescriptor> map = new LinkedHashMap<>();
+        attributes.forEach(attribute -> map.put(attribute.element(), attribute));
         for (VariableElement parameter : method.getParameters()) {
             // straight forward case type and name are the same
             Element matched = null;

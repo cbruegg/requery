@@ -17,12 +17,14 @@
 package io.requery.test.kt
 
 import io.requery.async.KotlinCompletableEntityStore
+import io.requery.async.KotlinNonBlockingEntityStore
 import io.requery.kotlin.eq
 import io.requery.query.Result
 import io.requery.sql.KotlinConfiguration
 import io.requery.sql.KotlinEntityDataStore
 import io.requery.sql.SchemaModifier
 import io.requery.sql.TableCreationMode
+import kotlinx.coroutines.experimental.runBlocking
 import org.h2.jdbcx.JdbcDataSource
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -32,13 +34,13 @@ import org.junit.Test
 import java.sql.SQLException
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
-import kotlin.properties.Delegates
 
 class CompletableTest {
 
     val executor: ExecutorService = Executors.newSingleThreadExecutor()
     lateinit var instance: KotlinEntityDataStore<Any>
     val data: KotlinCompletableEntityStore<Any> get() = KotlinCompletableEntityStore(instance, executor)
+    val nonBlockingData: KotlinNonBlockingEntityStore<Any> get() = KotlinNonBlockingEntityStore(instance, executor)
 
     internal fun randomPerson(): Person {
         return FunctionalTest.randomPerson()
@@ -71,7 +73,7 @@ class CompletableTest {
     }
 
     @Test
-    fun testGet() {
+    fun testGet() = runBlocking {
         val person = randomPerson()
         val personId = instance.insert(person).id
 
@@ -83,6 +85,12 @@ class CompletableTest {
                 .let {
                     assertEquals(person, it)
                 }
+
+        nonBlockingData
+                .select(Person::class)
+                .where(Person::id.eq(personId))
+                .get()
+                .await(Result<Person>::firstOrNull).let { assertEquals(person, it) }
     }
 
     @Test
@@ -104,9 +112,8 @@ class CompletableTest {
     }
 
     @Test
-    fun testInsertCount() {
-        val person = randomPerson()
-        data.insert(person)
+    fun testInsertCount() = runBlocking {
+        data.insert(randomPerson())
                 .get()
                 .let {
                     assertTrue(it.id > 0)
@@ -118,6 +125,18 @@ class CompletableTest {
                 .get()
                 .let {
                     assertEquals(1, it)
+                }
+
+        nonBlockingData.insert(randomPerson())
+                .await()
+                .let {
+                    assertTrue(it.id > 1)
+                }
+        nonBlockingData.count(Person::class)
+                .get()
+                .await()
+                .let {
+                    assertEquals(2, it)
                 }
     }
 }

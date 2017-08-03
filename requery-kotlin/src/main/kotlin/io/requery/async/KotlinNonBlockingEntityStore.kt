@@ -1,5 +1,6 @@
 package io.requery.async
 
+import io.requery.RollbackException
 import io.requery.TransactionIsolation
 import io.requery.kotlin.*
 import io.requery.kotlin.Deletion
@@ -9,13 +10,24 @@ import io.requery.kotlin.Selection
 import io.requery.kotlin.Update
 import io.requery.meta.Attribute
 import io.requery.query.*
+import io.requery.sql.Configuration
+import io.requery.sql.KotlinEntityDataStore
 import io.requery.util.function.Function
+import kotlinx.coroutines.experimental.asCoroutineDispatcher
+import kotlinx.coroutines.experimental.async
+import kotlinx.coroutines.experimental.sync.Mutex
 import java.util.concurrent.Executor
-import kotlin.coroutines.experimental.suspendCoroutine
+import java.util.concurrent.Executors
 import kotlin.reflect.KClass
 
-class KotlinNonBlockingEntityStore<T : Any>(private val store: BlockingEntityStore<T>,
-                                            val executor: Executor) : EntityStore<T, Any> {
+fun <T : Any> KotlinEntityDataStore(configuration: Configuration) =
+        KotlinNonBlockingEntityStore<T>(KotlinEntityDataStore(configuration))
+
+class KotlinNonBlockingEntityStore<T : Any>(private val store: KotlinEntityDataStore<T>) : EntityStore<T, Any> {
+
+    private val executor = Executors.newSingleThreadExecutor()
+    private val transactionContext by lazy { KotlinNonBlockingEntityStore(store) }
+    private val mutex = Mutex()
 
     override fun close() = store.close()
 
@@ -61,32 +73,66 @@ class KotlinNonBlockingEntityStore<T : Any>(private val store: BlockingEntitySto
 
     override fun toBlocking(): BlockingEntityStore<T> = store
 
-    fun <V> withTransaction(body: BlockingEntityStore<T>.() -> V): SuspendResult<V> = execute { store.withTransaction(body) }
-    fun <V> withTransaction(isolation: TransactionIsolation, body: BlockingEntityStore<T>.() -> V): SuspendResult<V> = execute { store.withTransaction(isolation, body) }
+    suspend fun <V> withTransaction(body: suspend KotlinNonBlockingEntityStore<T>.() -> V): SuspendResult<V> = execute {
+        mutex.use {
+            val transaction = store.data.transaction().begin()
+            try {
+                val result = transactionContext.body()
+                transaction.commit()
+                return@use result
+            } catch (e: Exception) {
+                transaction.rollback()
+                throw RollbackException(e)
+            }
+        }
+    }
 
-    fun <V> execute(block: KotlinNonBlockingEntityStore<T>.() -> V): SuspendResult<V> = SuspendResult(executor) { block() }
+    suspend fun <V> withTransaction(isolation: TransactionIsolation,
+                                    body: suspend KotlinNonBlockingEntityStore<T>.() -> V): SuspendResult<V> = execute {
+        mutex.use {
+            val transaction = store.data.transaction().begin(isolation)
+            try {
+                val result = transactionContext.body()
+                transaction.commit()
+                return@use result
+            } catch (e: Exception) {
+                transaction.rollback()
+                throw RollbackException(e)
+            }
+        }
+    }
+
+    fun <V> execute(block: suspend KotlinNonBlockingEntityStore<T>.() -> V): SuspendResult<V> =
+            SuspendResult(executor, mutex) { block() }
 
     @Suppress("UNCHECKED_CAST")
     private fun <E> result(query: Return<out Result<E>>): QueryDelegate<NonBlockingCompletableResult<E>> {
         val element = query as QueryDelegate<Result<E>>
-        return element.extend(Function { result -> NonBlockingCompletableResult(result, executor) })
+        return element.extend(Function { result -> NonBlockingCompletableResult(result, executor, mutex) })
     }
 
     @Suppress("UNCHECKED_CAST")
     private fun <E> scalar(query: Return<out Scalar<E>>): QueryDelegate<NonBlockingCompletableScalar<E>> {
         val element = query as QueryDelegate<Scalar<E>>
-        return element.extend(Function { result -> NonBlockingCompletableScalar(result, executor) })
+        return element.extend(Function { result -> NonBlockingCompletableScalar(result, executor, mutex) })
     }
 }
 
-class SuspendResult<out V> internal constructor(private val executor: Executor, private val block: () -> V) {
-    suspend fun await(): V = suspendCoroutine { cont ->
-        executor.execute {
-            try {
-                cont.resume(block())
-            } catch (e: Exception) {
-                cont.resumeWithException(e)
-            }
-        }
+class SuspendResult<out V> internal constructor(
+        executor: Executor,
+        private val mutex: Mutex,
+        private val block: suspend () -> V) {
+
+    private val dispatcher = executor.asCoroutineDispatcher()
+
+    suspend fun await(): V = async(dispatcher) { mutex.use(block) }.await()
+}
+
+internal suspend fun <T> Mutex.use(f: suspend () -> T): T {
+    lock()
+    try {
+        return f()
+    } finally {
+        unlock()
     }
 }

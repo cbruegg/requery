@@ -4,6 +4,7 @@ import io.requery.query.Result
 import io.requery.query.ResultDelegate
 import io.requery.query.element.QueryElement
 import io.requery.query.element.QueryWrapper
+import kotlinx.coroutines.experimental.sync.Mutex
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.Executor
 import java.util.function.Supplier
@@ -23,13 +24,15 @@ open class CompletableResult<E>(delegate: Result<E>, val executor: Executor) : R
 
 }
 
-class NonBlockingCompletableResult<E>(delegate: Result<E>, executor: Executor) : CompletableResult<E>(delegate, executor) {
-    inline suspend fun <V> await(crossinline block: CompletableResult<E>.() -> V): V = suspendCoroutine { cont ->
-        executor.execute {
-            try {
-                cont.resume(block())
-            } catch (e: Exception) {
-                cont.resumeWithException(e)
+class NonBlockingCompletableResult<E>(delegate: Result<E>, executor: Executor, private val mutex: Mutex) : CompletableResult<E>(delegate, executor) {
+    suspend fun <V> await(block: NonBlockingCompletableResult<E>.() -> V): V = mutex.use {
+        suspendCoroutine<V> { cont ->
+            executor.execute {
+                try {
+                    cont.resume(block())
+                } catch (e: Exception) {
+                    cont.resumeWithException(e)
+                }
             }
         }
     }
